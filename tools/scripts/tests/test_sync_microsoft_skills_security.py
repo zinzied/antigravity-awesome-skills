@@ -41,6 +41,87 @@ class SyncMicrosoftSkillsSecurityTests(unittest.TestCase):
                     child.unlink()
                 outside.rmdir()
 
+    def test_find_github_skills_ignores_symlinked_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            github_skills = root / ".github" / "skills"
+            github_skills.mkdir(parents=True)
+
+            safe_skill = github_skills / "safe-skill"
+            safe_skill.mkdir()
+            (safe_skill / "SKILL.md").write_text("---\nname: safe-skill\n---\n", encoding="utf-8")
+
+            outside = Path(tempfile.mkdtemp())
+            try:
+                escaped = outside / "escaped-skill"
+                escaped.mkdir()
+                (escaped / "SKILL.md").write_text("---\nname: escaped\n---\n", encoding="utf-8")
+                (github_skills / "escape").symlink_to(escaped, target_is_directory=True)
+
+                entries = sms.find_github_skills(root, set())
+                relative_paths = {str(entry["relative_path"]) for entry in entries}
+
+                self.assertEqual(relative_paths, {".github/skills/safe-skill"})
+            finally:
+                for child in escaped.iterdir():
+                    child.unlink()
+                escaped.rmdir()
+                outside.rmdir()
+
+    def test_find_github_skills_ignores_symlinked_skill_markdown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            github_skills = root / ".github" / "skills"
+            github_skills.mkdir(parents=True)
+
+            safe_skill = github_skills / "safe-skill"
+            safe_skill.mkdir()
+            (safe_skill / "SKILL.md").write_text("---\nname: safe-skill\n---\n", encoding="utf-8")
+
+            linked_skill = github_skills / "linked-skill"
+            linked_skill.mkdir()
+
+            outside = Path(tempfile.mkdtemp())
+            try:
+                target = outside / "SKILL.md"
+                target.write_text("---\nname: escaped\n---\n", encoding="utf-8")
+                (linked_skill / "SKILL.md").symlink_to(target)
+
+                entries = sms.find_github_skills(root, set())
+                relative_paths = {str(entry["relative_path"]) for entry in entries}
+
+                self.assertEqual(relative_paths, {".github/skills/safe-skill"})
+            finally:
+                target.unlink()
+                outside.rmdir()
+
+    def test_find_plugin_skills_ignores_symlinked_skill_markdown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            github_plugins = root / ".github" / "plugins"
+            github_plugins.mkdir(parents=True)
+
+            safe_plugin = github_plugins / "safe-plugin"
+            safe_plugin.mkdir()
+            (safe_plugin / "SKILL.md").write_text("---\nname: safe-plugin\n---\n", encoding="utf-8")
+
+            linked_plugin = github_plugins / "linked-plugin"
+            linked_plugin.mkdir()
+
+            outside = Path(tempfile.mkdtemp())
+            try:
+                target = outside / "SKILL.md"
+                target.write_text("---\nname: escaped\n---\n", encoding="utf-8")
+                (linked_plugin / "SKILL.md").symlink_to(target)
+
+                entries = sms.find_plugin_skills(root, set())
+                relative_paths = {str(entry["relative_path"]) for entry in entries}
+
+                self.assertEqual(relative_paths, {"plugins/safe-plugin"})
+            finally:
+                target.unlink()
+                outside.rmdir()
+
 
 if __name__ == "__main__":
     unittest.main()

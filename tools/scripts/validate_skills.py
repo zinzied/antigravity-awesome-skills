@@ -53,7 +53,7 @@ def parse_frontmatter(content, rel_path=None):
     Parse frontmatter using PyYAML for robustness.
     Returns a dict of key-values and a list of error messages.
     """
-    fm_match = re.search(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    fm_match = re.search(r'^---\s*\n(.*?)\n?---(?:\s*\n|$)', content, re.DOTALL)
     if not fm_match:
         return None, ["Missing or malformed YAML frontmatter"]
     
@@ -77,16 +77,11 @@ def parse_frontmatter(content, rel_path=None):
     except yaml.YAMLError as e:
         return None, [f"YAML Syntax Error: {e}"]
 
-def validate_skills(skills_dir, strict_mode=False):
-    configure_utf8_output()
-
-    print(f"🔍 Validating skills in: {skills_dir}")
-    print(f"⚙️  Mode: {'STRICT (CI)' if strict_mode else 'Standard (Dev)'}")
-    
+def collect_validation_results(skills_dir, strict_mode=False):
     errors = []
     warnings = []
     skill_count = 0
-    
+
     # Pre-compiled regex
     security_disclaimer_pattern = re.compile(r"AUTHORIZED USE ONLY", re.IGNORECASE)
 
@@ -114,7 +109,7 @@ def validate_skills(skills_dir, strict_mode=False):
             
             # 1. Frontmatter Check
             metadata, fm_errors = parse_frontmatter(content, rel_path)
-            if not metadata:
+            if metadata is None:
                 errors.append(f"❌ {rel_path}: Missing or malformed YAML frontmatter")
                 continue # Cannot proceed without metadata
             
@@ -187,6 +182,25 @@ def validate_skills(skills_dir, strict_mode=False):
                 target_path = os.path.normpath(os.path.join(root, link_clean))
                 if not os.path.exists(target_path):
                     errors.append(f"❌ {rel_path}: Dangling link detected. Path '{link_clean}' (from '...({link})') does not exist locally.")
+
+    return {
+        "skill_count": skill_count,
+        "warnings": warnings,
+        "errors": errors,
+        "strict_mode": strict_mode,
+    }
+
+
+def validate_skills(skills_dir, strict_mode=False):
+    configure_utf8_output()
+
+    print(f"🔍 Validating skills in: {skills_dir}")
+    print(f"⚙️  Mode: {'STRICT (CI)' if strict_mode else 'Standard (Dev)'}")
+
+    results = collect_validation_results(skills_dir, strict_mode=strict_mode)
+    warnings = results["warnings"]
+    errors = results["errors"]
+    skill_count = results["skill_count"]
 
     # Reporting
     print(f"\n📊 Checked {skill_count} skills.")

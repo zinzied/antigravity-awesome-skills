@@ -5,7 +5,7 @@
 This guide details the exact procedures for maintaining `antigravity-awesome-skills`.
 It covers the **Quality Bar**, **Documentation Consistency**, and **Release Workflows**.
 
-**Maintainer shortcuts:** [Merge a PR](#b-when-you-merge-a-pr-step-by-step) · [Reopen & merge a closed PR](#if-a-pr-was-closed-after-local-integration-reopen-and-merge) · [Post-merge & contributors](#c-post-merge-routine-must-do-before-a-release) · [Close issues](#when-to-close-an-issue) · [Create a release](#4-release-workflow)
+**Maintainer shortcuts:** [Merge a PR](#b-when-you-merge-a-pr-step-by-step) · [Reopen & merge a closed PR](#if-a-pr-was-closed-after-local-integration-reopen-and-merge) · [Post-merge credits sync](#c-post-merge-credits-sync-mandatory-after-every-pr-merge) · [Close issues](#when-to-close-an-issue) · [Create a release](#4-release-workflow)
 
 ---
 
@@ -80,7 +80,34 @@ Before ANY commit that adds/modifies skills, run the chain:
     npm run catalog
     ```
 
-3.  **COMMIT GENERATED FILES**:
+3.  **Optional maintainer sweep shortcut**:
+    ```bash
+    npm run sync:repo-state
+    ```
+    This wraps `chain + catalog + sync:web-assets + sync:contributors + audit:consistency` for a full local repo-state refresh.
+    The scheduled GitHub Actions workflow `Repo Hygiene` runs this same sweep weekly to catch slow drift on `main`.
+    It also enforces the frozen validation warning budget, so new warnings do not creep in silently while the legacy `135` known warnings remain accepted.
+
+    When you need the live GitHub repo metadata updated too, run:
+
+    ```bash
+    npm run sync:github-about
+    npm run audit:consistency:github
+    ```
+    For a read-only summary of current repo health, run:
+    ```bash
+    npm run audit:maintainer
+    ```
+    When you are reducing legacy `risk: unknown` debt, use this sequence instead of hand-editing large batches:
+    ```bash
+    npm run audit:skills
+    npm run sync:risk-labels -- --dry-run
+    npm run sync:risk-labels
+    npm run sync:repo-state
+    ```
+    `sync:risk-labels` is intentionally conservative. It should handle only the obvious subset; the ambiguous tail still needs maintainer review.
+
+4.  **COMMIT GENERATED FILES**:
     ```bash
     git add README.md skills_index.json data/skills_index.json data/catalog.json data/bundles.json data/aliases.json CATALOG.md
     git commit -m "chore: sync generated files"
@@ -88,6 +115,7 @@ Before ANY commit that adds/modifies skills, run the chain:
     > 🔴 **CRITICAL for direct `main` work**: If you skip this on maintainer work that lands directly on `main`, CI will fail with "Detected uncommitted changes".
     > For contributor PRs, do **not** include derived registry artifacts. CI blocks direct edits to those files and previews drift separately.
     > See [`docs/maintainers/ci-drift-fix.md`](../docs/maintainers/ci-drift-fix.md) for details.
+    > `main` may still auto-commit canonical artifacts with `[ci skip]`, but only within the generated-files contract. If the sync leaves unmanaged drift, the workflow must fail instead of pushing a partial fix.
 
 ### B. When You Merge a PR (Step-by-Step)
 
@@ -95,7 +123,7 @@ Before ANY commit that adds/modifies skills, run the chain:
 
 **Before merging:**
 
-1.  **CI is green** — Validation, reference checks, tests, and generated artifact steps passed (see [`.github/workflows/ci.yml`](workflows/ci.yml)).
+1.  **CI is green** — Validation, reference checks, tests, and generated artifact steps passed (see [`.github/workflows/ci.yml`](workflows/ci.yml)). If the PR changes any `SKILL.md`, the separate [`skill-review` workflow](workflows/skill-review.yml) must also be green.
 2.  **Generated drift understood** — On pull requests, generator drift is informational only. Do not block a good PR solely because canonical artifacts would be regenerated. Also do not accept PRs that directly edit `CATALOG.md`, `skills_index.json`, or `data/*.json`; those files are `main`-owned.
 3.  **Quality Bar** — PR description confirms the [Quality Bar Checklist](.github/PULL_REQUEST_TEMPLATE.md) (metadata, risk label, credits if applicable).
 4.  **Issue link** — If the PR fixes an issue, the PR description should contain `Closes #N` or `Fixes #N` so GitHub auto-closes the issue on merge.
@@ -105,6 +133,34 @@ Before ANY commit that adds/modifies skills, run the chain:
 - **Always merge via GitHub** so the PR shows as **Merged** and the contributor gets credit. Use **"Squash and merge"**. Do **not** integrate locally and then close the PR — that would show "Closed" and the contributor would not get proper attribution.
 - **If the PR has merge conflicts:** Resolve them **on the PR branch** (you or the contributor: merge `main` into the PR branch, fix conflicts, drop derived registry files from the branch if they appear, push). For generated registry files, prefer keeping `main`'s side rather than hand-editing conflicts. Then use **"Squash and merge"** on GitHub. Full steps: [docs/maintainers/merging-prs.md](../docs/maintainers/merging-prs.md).
 - **Rare exception:** Only if merging via GitHub is not possible, you may integrate locally and close the PR; in that case you **must** add a Co-authored-by line to the commit and explain in a comment. Prefer to avoid this so PRs are always **Merged**.
+
+**If CI is blocked on fork approval or stale PR metadata:**
+
+This happens regularly on community PRs from forks. The common symptoms are:
+
+- `gh pr checks` shows `no checks reported` even though Actions runs exist.
+- `gh run list` shows `action_required` with `jobs: []` for `Skills Registry CI` or `Skill Review`.
+- `pr-policy` fails with `PR body must include the Quality Bar Checklist from the template.` even after you corrected the PR body and hit rerun.
+
+Use this playbook:
+
+1.  **Approve waiting fork runs** using the run id(s) from `gh run list`:
+    ```bash
+    gh api -X POST repos/<OWNER>/<REPO>/actions/runs/<RUN_ID>/approve
+    ```
+2.  **Normalize the PR body** so it includes the repository template's `## Quality Bar Checklist ✅` section. If `gh pr edit` works, use it. If `gh pr edit` fails with the GraphQL `projectCards` / Projects Classic deprecation error, patch the PR body through the REST API instead:
+    ```bash
+    gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER> -X PATCH --input <(jq -n --rawfile body /tmp/pr_body.md '{body:$body}')
+    ```
+3.  **Do not trust a plain rerun** to pick up the updated PR body. In practice, `gh run rerun <RUN_ID>` may re-use the original `pull_request` event payload, so `pr-policy` can keep reading the stale body and fail again.
+4.  **If the rerun still sees stale metadata, close and reopen the PR** to force a fresh `pull_request` event:
+    ```bash
+    gh pr close <PR_NUMBER> --comment "Maintainer workflow refresh: closing and reopening to retrigger pull_request checks against the updated PR body."
+    gh pr reopen <PR_NUMBER>
+    ```
+5.  **Approve the newly created fork runs** after reopen. They will usually appear as a fresh pair of `action_required` runs for `Skills Registry CI` and `Skill Review`.
+6.  **Wait for the new checks only.** You may see older failed `pr-policy` runs in the rollup alongside newer green runs. Merge only after the fresh run set for the current PR state is fully green: `pr-policy`, `source-validation`, `artifact-preview`, and `review` when `SKILL.md` changed.
+7.  **If `gh pr merge` says `Base branch was modified`**, refresh the PR state and retry. This is normal when you are merging a batch and `main` moved between attempts.
 
 **If a PR was closed after local integration (reopen and merge):**
 
@@ -145,21 +201,43 @@ We used this flow for PRs [#220](https://github.com/sickn33/antigravity-awesome-
     ```text
     Fixed in #<PR_NUMBER>. Shipped in release vX.Y.Z.
     ```
-3.  **Single PR or small batch** — Optionally run the full Post-Merge Routine below. For a single, trivial PR you can defer it to the next release prep.
+3.  **Run the Post-Merge Credits Sync below** — this is mandatory after every PR merge, including single-PR merges.
 
-### C. Post-Merge Routine (Must Do Before a Release)
+### C. Post-Merge Credits Sync (Mandatory After Every PR Merge)
 
-After you have merged several PRs or before cutting a release:
+This section is **not optional**. Every time a PR is merged, you must ensure both README credit surfaces are correct on `main`:
 
-1.  **Sync Contributors List**:
-    - Run: `git shortlog -sn --all`
-    - Update `## Repo Contributors` in README.md.
+- `### Community Contributors` / `## Credits & Sources` for external repositories referenced by the merged work
+- `## Repo Contributors` for the human contributor list
 
-2.  **Verify Table of Contents**:
-    - Ensure all new headers have clean anchors.
-    - **NO EMOJIS** in H2 headers.
+Do this **immediately after each PR merge**. Do not defer it to release prep.
 
-3.  **Prepare for release** — Draft the release and tag when ready (see [§4 Release Workflow](#4-release-workflow) below).
+1.  **Pull the merged `main` state locally**:
+    ```bash
+    git checkout main
+    git pull --ff-only origin main
+    ```
+
+2.  **Sync `Repo Contributors`**:
+    - Run: `npm run sync:contributors`
+    - This refreshes `## Repo Contributors` in `README.md` from the live GitHub contributor list while preserving custom bot/app links.
+    - If you are already doing a full maintainer sweep, `npm run sync:repo-state` is also acceptable.
+
+3.  **Audit external-source credits for the merged PR**:
+    - Read the merged PR description, changed files, linked issues, and any release-note draft text you plan to ship.
+    - If the PR added skills, references, or content sourced from an external GitHub repo that is not already credited in `README.md`, add it immediately.
+    - If the repo is from an official organization/project source, place it under `### Official Sources`.
+    - If the repo is a non-official ecosystem/community source, place it under `### Community Contributors`.
+    - If the PR reveals that a credited repo is dead, renamed, archived, or overstated, fix the README entry in the same follow-up pass instead of leaving stale metadata behind.
+    - Release notes are not a substitute for README attribution. If a repo appears in the merged work or planned release notes and belongs in credits, add it to the README at merge time.
+
+4.  **Commit and push README credit updates right away**:
+    - If `npm run sync:contributors` or the credit audit changed `README.md`, commit and push that follow-up immediately on `main`.
+    - Do not leave contributor or community-credit drift sitting locally until the next release.
+
+5.  **Then continue with normal maintenance**:
+    - Verify Table of Contents if you touched headings.
+    - Prepare the release when ready (see [§4 Release Workflow](#4-release-workflow) below).
 
 ---
 
@@ -199,10 +277,15 @@ Locations to check:
 
 ### D. Credits Policy (Who goes where?)
 
-- **Credits & Sources**: Use this for **External Repos**.
-  - _Rule_: "I extracted skills from this link you sent me." -> Add to `## Credits & Sources`.
+- **Official Sources**: Use this for **official org/vendor/project repos**.
+  - _Rule_: "This came from the official repo for the tool/company/project." -> Add to `### Official Sources`.
+- **Community Contributors**: Use this for **non-official external repos** that contributed skills, references, templates, or other source material.
+  - _Rule_: "This merged PR depends on or imports material from a community repo." -> Add to `### Community Contributors`.
+- **Credits & Sources**: This whole area is for **external repos and upstream sources**, split into Official vs Community.
 - **Repo Contributors**: Use this for **Pull Requests**.
   - _Rule_: "This user sent a PR." -> Add to `## Repo Contributors`.
+
+**Merge rule:** after every PR merge, check **both** `### Community Contributors` and `## Repo Contributors`. A merge is not fully done until both sections are either confirmed unchanged or updated and pushed.
 
 ### E. Badges & Links
 
@@ -263,6 +346,7 @@ Preflight verification → Changelog → `npm run release:prepare -- X.Y.Z` → 
     ```bash
     npm run release:preflight
     ```
+    This now runs the deterministic `sync:release-state` path, refreshes tracked web assets, executes the local test suite, runs the web-app build, and performs `npm pack --dry-run --json` before a release is considered healthy.
     Optional diagnostic pass:
     ```bash
     npm run validate:strict
@@ -284,6 +368,7 @@ Preflight verification → Changelog → `npm run release:prepare -- X.Y.Z` → 
     ```
 
     **Important:** The release tag must match `package.json`'s version. The [Publish to npm](workflows/publish-npm.yml) workflow runs on **Release published** and will run `npm publish`; npm rejects republishing the same version.
+    Before publishing, that workflow re-runs `sync:release-state`, checks for canonical drift with `git diff --exit-code`, runs tests/docs security/web build, and performs `npm pack --dry-run --json`.
 
     _Or create the release manually via GitHub UI > Releases > Draft a new release, then publish._
 
@@ -301,6 +386,129 @@ Preflight verification → Changelog → `npm run release:prepare -- X.Y.Z` → 
       ```bash
       gh issue close <ID> --comment "Shipped in vX.Y.Z. See CHANGELOG.md and release notes."
       ```
+
+### GitHub Release Notes Requirements
+
+Every published GitHub Release should work as a discovery page, not just an internal changelog dump.
+
+Required rules:
+
+1. Put the user-facing tool language early:
+   - mention Claude Code, Cursor, Codex CLI, Gemini CLI, or the specific supported tools that matter for that release.
+2. Add a short "Start here" block near the top:
+   - install command
+   - link to `README.md#choose-your-tool`
+   - link to `README.md#best-skills-by-tool`
+   - link to `docs/users/bundles.md`
+   - link to `docs/users/workflows.md`
+3. Keep the first paragraph readable to someone arriving from Google or GitHub Releases.
+4. Prefer plain ASCII section headers in release notes.
+5. Do not rewrite historical releases in bulk. Improve the latest release and all future releases.
+
+### GitHub Release Notes Template
+
+Use this structure for the published GitHub Release object:
+
+```markdown
+## [X.Y.Z] - YYYY-MM-DD - "User-facing title"
+
+> Installable skill library update for Claude Code, Cursor, Codex CLI, Gemini CLI, Antigravity, and related AI coding assistants.
+
+Start here:
+
+- Install: `npx antigravity-awesome-skills`
+- Choose your tool: [README -> Choose Your Tool](https://github.com/sickn33/antigravity-awesome-skills#choose-your-tool)
+- Best skills by tool: [README -> Best Skills By Tool](https://github.com/sickn33/antigravity-awesome-skills#best-skills-by-tool)
+- Bundles: [docs/users/bundles.md](https://github.com/sickn33/antigravity-awesome-skills/blob/main/docs/users/bundles.md)
+- Workflows: [docs/users/workflows.md](https://github.com/sickn33/antigravity-awesome-skills/blob/main/docs/users/workflows.md)
+
+[Brief paragraph explaining what changed and who the release helps.]
+
+## New Skills
+
+- **skill-name** - user-facing summary
+
+## Improvements
+
+- **Area**: user-facing improvement summary
+
+## Who should care
+
+- **Claude Code users** ...
+- **Cursor users** ...
+- **Codex CLI users** ...
+- **Gemini CLI users** ...
+
+## Credits
+
+- **@username** for `skill-name`
+
+Upgrade now: `git pull origin main` to fetch the latest skills.
+```
+
+### Social Preview
+
+If you set a repository social preview image on GitHub, keep these rules:
+
+- focus on the core value proposition;
+- mention the primary supported tools when helpful;
+- avoid dense text or tiny unreadable logos;
+- refresh it when repository positioning changes materially.
+
+Manual upload path on GitHub:
+
+1. Open the repository on GitHub.
+2. Go to **Settings**.
+3. Open the **Social preview** section.
+4. Upload the image you want to use.
+
+### Pinned Discussion Template
+
+Canonical onboarding discussion:
+
+- Title: `Start here: best skills by tool`
+- Current live discussion: `https://github.com/sickn33/antigravity-awesome-skills/discussions/361`
+
+When refreshing or recreating the pinned onboarding discussion, keep this structure:
+
+~~~markdown
+If you are new to **Antigravity Awesome Skills**, start here instead of browsing all skills at random.
+
+## Install in 1 minute
+
+```bash
+npx antigravity-awesome-skills
+```
+
+## Best starting pages by tool
+
+- Claude Code
+- Cursor
+- Codex CLI
+- Gemini CLI
+
+## Start with a bundle
+
+- Bundles
+- Workflows
+- Getting started
+- Usage guide
+
+## Best starter skills for most users
+
+- `@brainstorming`
+- `@lint-and-validate`
+- `@systematic-debugging`
+- `@create-pr`
+- `@security-auditor`
+
+## Compare before you install
+
+- comparison pages
+- best-of pages
+~~~
+
+If GitHub does not support pinning via API, create/update the discussion programmatically if possible and pin it manually in the UI.
 
 ### When to Close an Issue
 
