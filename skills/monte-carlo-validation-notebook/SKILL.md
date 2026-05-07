@@ -18,6 +18,10 @@ Generate a SQL Notebook with validation queries for dbt changes.
 
 **Arguments:** $ARGUMENTS
 
+## When to Use
+
+Use this skill when the user wants to validate dbt model or snapshot changes with Monte Carlo SQL Notebook queries, either from a GitHub PR or a local dbt repository.
+
 Parse the arguments:
 - **Target** (required): first argument — a GitHub PR URL or local dbt repo path
 - **MC Base URL** (optional): `--mc-base-url <URL>` — defaults to `https://getmontecarlo.com`
@@ -683,3 +687,8 @@ gh api repos/monte-carlo-data/mc-bridge/readme --jq '.content' | base64 --decode
 ```
 
 Focus on: how to install, configure connections, and run MC Bridge. Don't dump the entire README — extract just the setup-relevant sections.
+
+## Limitations
+- Use this skill only when the task clearly matches the scope described above.
+- Do not treat the output as a substitute for environment-specific validation, testing, or expert review.
+- Stop and ask for clarification if required inputs, permissions, safety boundaries, or success criteria are missing.
